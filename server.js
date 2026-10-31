@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const fetch = require('node-fetch');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 
@@ -19,7 +19,7 @@ app.use(express.json());
 const DOKU_CLIENT_ID = "BRN-0216-1793357283385";
 const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_API_KEY = "doku_key_b0222d971c30474d9dbca1dbfb5f46ee";
-const DOKU_BASE_URL = "https://api-sandbox.doku.com"; // Ubah ke https://api.doku.com jika sudah live/production
+const DOKU_BASE_URL = "https://api-sandbox.doku.com";
 
 // ENDPOINT PEMBUATAN VA SNAP DOKU (Khusus DOKU Payment)
 app.post('/api/create-invoice', async (req, res) => {
@@ -57,7 +57,7 @@ app.post('/api/create-invoice', async (req, res) => {
             channelName = "VIRTUAL_ACCOUNT_BANK_CIMB";
             partnerServiceId = "  12088";
         } else if (paymentMethod && paymentMethod.includes("Maybank")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_MAYBANK";
+            channelName = "VIRTual_ACCOUNT_BANK_MAYBANK";
             partnerServiceId = "  12099";
         } else if (paymentMethod && paymentMethod.includes("Sinarmas")) {
             channelName = "VIRTUAL_ACCOUNT_BANK_SINARMAS";
