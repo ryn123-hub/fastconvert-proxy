@@ -18,45 +18,49 @@ app.use(express.json());
 const DOKU_CLIENT_ID = "BRN-0216-1793357283385";
 const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_API_KEY = "doku_key_b0222d971c30474d9dbca1dbfb5f46ee";
-const DOKU_BASE_URL = "https://api-sandbox.doku.com"; // Sesuaikan jika menggunakan environment live
+const DOKU_BASE_URL = "https://api-sandbox.doku.com"; // Gunakan sandbox untuk uji coba
 
-// ENDPOINT PEMBUATAN SNAP VIRTUAL ACCOUNT
+// ENDPOINT PEMBUATAN LINK CHECKOUT DOKU
 app.post('/api/create-invoice', async (req, res) => {
     try {
         const { amount, invoiceNumber, email } = req.body;
         
-        const timestamp = new Date().toISOString().slice(0, 19) + "+07:00";
-        const endpoint = "/virtual-accounts/v1/transfer-va/create-va";
+        const requestId = "REQ-" + Date.now();
+        const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
 
         const requestBody = {
-            "partnerReferenceNo": invoiceNumber,
-            "amount": {
-                "value": Number(amount).toFixed(2),
-                "currency": "IDR"
+            "order": {
+                "amount": Number(amount),
+                "invoice_number": invoiceNumber,
+                "currency": "IDR",
+                "memo": "Top Up Saldo FastConvert"
             },
-            "feeType": "TOM",
-            "virtualAccountName": email ? email.split('@')[0] : "Customer",
-            "virtualAccountEmail": email || "customer@mail.com",
-            "expiredDate": new Date(Date.now() + 24*60*60*1000).toISOString()
+            "payment": {
+                "payment_due_date": 60
+            },
+            "customer": {
+                "name": email ? email.split('@')[0] : "Customer",
+                "email": email || "customer@mail.com"
+            }
         };
 
+        const endpoint = "/checkout/v1/payment";
         const bodyString = JSON.stringify(requestBody);
-        const minifiedBody = JSON.stringify(JSON.parse(bodyString));
-        const sha256 = crypto.createHash('sha256').update(minifiedBody).digest('hex');
-        const stringToSign = `POST:${endpoint}:${DOKU_API_KEY}:${sha256}:${timestamp}`;
+        const digest = crypto.createHash('sha256').update(bodyString).digest('base64');
+        const stringToSign = `Client-Id:${DOKU_CLIENT_ID}\nRequest-Id:${requestId}\nRequest-Timestamp:${requestTimestamp}\nRequest-Target:${endpoint}\nDigest:${digest}`;
         const signature = crypto.createHmac('sha512', DOKU_SECRET_KEY).update(stringToSign).digest('base64');
 
         const dokuResponse = await fetch(`${DOKU_BASE_URL}${endpoint}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-TIMESTAMP': timestamp,
-                'X-SIGNATURE': signature,
-                'X-PARTNER-ID': DOKU_CLIENT_ID,
-                'X-EXTERNAL-ID': "EX-" + Date.now(),
-                'CHANNEL-ID': 'WEB'
+                'Client-Id': DOKU_CLIENT_ID,
+                'Api-Key': DOKU_API_KEY,
+                'Request-Id': requestId,
+                'Request-Timestamp': requestTimestamp,
+                'Signature': `HMACSHA512=${signature}`
             },
-            body: minifiedBody
+            body: bodyString
         });
 
         const responseText = await dokuResponse.text();
@@ -68,12 +72,10 @@ app.post('/api/create-invoice', async (req, res) => {
             return res.status(500).json({ success: false, message: "DOKU merespons dengan format yang tidak valid." });
         }
 
-        console.log("DOKU SNAP Response:", dokuData);
+        console.log("DOKU Checkout Response:", dokuData);
 
-        if (dokuResponse.ok && (dokuData.responseCode === "2002700" || dokuData.virtualAccountData)) {
-            const vaData = dokuData.virtualAccountData || dokuData;
-            
-            // Simpan transaksi ke Firestore
+        if (dokuResponse.ok && dokuData.response?.payment?.url) {
+            // Simpan transaksi pending ke Firestore
             await db.collection('transactions').add({
                 trxid: invoiceNumber,
                 amount: Number(amount),
@@ -84,11 +86,10 @@ app.post('/api/create-invoice', async (req, res) => {
 
             return res.status(200).json({ 
                 success: true, 
-                virtualAccountNo: vaData.virtualAccountNo || vaData.partnerReferenceNo,
-                paymentUrl: vaData.checkoutUrl || vaData.paymentUrl || null
+                paymentUrl: dokuData.response.payment.url 
             });
         } else {
-            return res.status(500).json({ success: false, message: dokuData.responseMessage || "Gagal membuat Virtual Account DOKU." });
+            return res.status(500).json({ success: false, message: dokuData.error?.message || "Gagal membuat tautan pembayaran DOKU." });
         }
     } catch (error) {
         console.error("API Error:", error);
@@ -96,24 +97,23 @@ app.post('/api/create-invoice', async (req, res) => {
     }
 });
 
-// WEBHOOK NOTIFIKASI DOKU SNAP
+// WEBHOOK NOTIFIKASI DOKU
 app.post('/api/doku-notification', async (req, res) => {
     try {
         const notificationData = req.body;
-        console.log("Webhook SNAP diterima:", notificationData);
+        console.log("Webhook DOKU diterima:", notificationData);
 
-        const trxId = notificationData.partnerReferenceNo;
-        const paymentStatus = notificationData.transactionStatus || notificationData.status;
-        const paidAmount = Number(notificationData.paidAmount?.value || notificationData.amount || 0);
+        const trxId = notificationData.order?.invoice_number || notificationData.partnerReferenceNo;
+        const paymentStatus = notificationData.transaction_status || notificationData.status;
+        const paidAmount = Number(notificationData.amount || notificationData.order?.amount || 0);
 
-        if (paymentStatus === '00' || paymentStatus === 'SUCCESS' || paymentStatus === 'PAID') {
+        if (paymentStatus === 'SUCCESS' || paymentStatus === 'PAID') {
             const trxQuery = await db.collection('transactions').where('trxid', '==', trxId).get();
             if (!trxQuery.empty) {
                 const trxDoc = trxQuery.docs[0];
                 const trxData = trxDoc.data();
                 if (trxData.status !== 'sukses') {
                     await trxDoc.ref.update({ status: 'sukses', updatedAt: new Date().toISOString() });
-                    
                     const userQuery = await db.collection('users').where('email', '==', trxData.email).get();
                     if (!userQuery.empty) {
                         const userDoc = userQuery.docs[0];
@@ -125,14 +125,14 @@ app.post('/api/doku-notification', async (req, res) => {
                 }
             }
         }
-        return res.status(200).json({ responseCode: "2000000", responseMessage: "Success" });
+        return res.status(200).json({ status: "OK" });
     } catch (error) {
         console.error("Webhook Error:", error);
-        return res.status(500).json({ responseCode: "5000000", responseMessage: error.message });
+        return res.status(500).json({ error: error.message });
     }
 });
 
-app.get('/', (req, res) => res.send("Fast Convert SNAP Server Running!"));
+app.get('/', (req, res) => res.send("Fast Convert DOKU Server Running!"));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server berjalan di port ${PORT}`));
 
