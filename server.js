@@ -17,10 +17,9 @@ app.use(express.json());
 
 const DOKU_CLIENT_ID = "BRN-0216-1793357283385";
 const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
-const DOKU_API_KEY = "doku_key_b0222d971c30474d9dbca1dbfb5f46ee";
 const DOKU_BASE_URL = "https://api-sandbox.doku.com";
 
-// ENDPOINT PEMBUATAN LINK CHECKOUT DOKU
+// ENDPOINT PEMBUATAN INVOICE / LINK PEMBAYARAN DOKU
 app.post('/api/create-invoice', async (req, res) => {
     try {
         const { amount, invoiceNumber, email } = req.body;
@@ -28,12 +27,14 @@ app.post('/api/create-invoice', async (req, res) => {
         const requestId = "REQ-" + Date.now();
         const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
 
+        // Menggunakan payload standar DOKU Invoicing/Payment Access
         const requestBody = {
             "order": {
                 "amount": Number(amount),
                 "invoice_number": invoiceNumber,
                 "currency": "IDR",
-                "memo": "Top Up Saldo FastConvert"
+                "callback_url": "https://fastconvert.onrender.com/topup-saldo.html",
+                "auto_redirect": true
             },
             "payment": {
                 "payment_due_date": 1440
@@ -62,17 +63,16 @@ app.post('/api/create-invoice', async (req, res) => {
             body: bodyString
         });
 
-        // Mengambil teks respons terlebih dahulu untuk debugging jika terjadi error HTML dari DOKU
         const responseText = await dokuResponse.text();
         let dokuData;
         try {
             dokuData = JSON.parse(responseText);
         } catch (e) {
             console.error("DOKU Non-JSON Response:", responseText);
-            return res.status(500).json({ success: false, message: "DOKU merespons dengan format yang tidak valid." });
+            return res.status(500).json({ success: false, message: "DOKU menolak akses. Periksa kembali Client ID & Secret Key." });
         }
 
-        console.log("DOKU Checkout Response:", dokuData);
+        console.log("DOKU Response:", dokuData);
 
         if (dokuResponse.ok && dokuData.response?.payment?.url) {
             return res.status(200).json({ 
@@ -80,7 +80,7 @@ app.post('/api/create-invoice', async (req, res) => {
                 paymentUrl: dokuData.response.payment.url 
             });
         } else {
-            return res.status(500).json({ success: false, message: dokuData.error?.message || "Gagal membuat tautan pembayaran DOKU." });
+            return res.status(500).json({ success: false, message: dokuData.error?.message || "Gagal membuat tautan dari DOKU." });
         }
     } catch (error) {
         console.error("API Error:", error);
@@ -88,7 +88,7 @@ app.post('/api/create-invoice', async (req, res) => {
     }
 });
 
-// WEBHOOK NOTIFIKASI DOKU (Otomatis Tambah Saldo Firebase)
+// WEBHOOK NOTIFIKASI DOKU
 app.post('/api/doku-notification', async (req, res) => {
     try {
         const notificationData = req.body;
@@ -123,7 +123,7 @@ app.post('/api/doku-notification', async (req, res) => {
     }
 });
 
-app.get('/', (req, res) => res.send("Fast Convert DOKU Link Server Running!"));
+app.get('/', (req, res) => res.send("Fast Convert Server Running!"));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server berjalan di port ${PORT}`));
 
