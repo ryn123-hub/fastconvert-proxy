@@ -15,131 +15,67 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Kredensial DOKU Anda
 const DOKU_CLIENT_ID = "BRN-0216-1793357283385";
 const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_API_KEY = "doku_key_b0222d971c30474d9dbca1dbfb5f46ee";
-const DOKU_BASE_URL = "https://api-sandbox.doku.com";
+const DOKU_BASE_URL = "https://api-sandbox.doku.com"; // Ubah ke https://api.doku.com jika sudah live
 
-// ENDPOINT PEMBUATAN VA SNAP DOKU (Khusus DOKU Payment)
+// ENDPOINT PEMBUATAN LINK CHECKOUT DOKU
 app.post('/api/create-invoice', async (req, res) => {
     try {
-        const { amount, invoiceNumber, email, phone, paymentMethod } = req.body;
+        const { amount, invoiceNumber, email } = req.body;
         
-        const timestamp = new Date().toISOString().slice(0, 19) + "+07:00";
-        const externalId = "EXT-" + Date.now();
-        
-        let channelName = "VIRTUAL_ACCOUNT_BANK_BJB";
-        let partnerServiceId = "  120000";
+        const requestId = "REQ-" + Date.now();
+        const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
 
-        if (paymentMethod && paymentMethod.includes("BCA")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_BCA";
-            partnerServiceId = "  12011";
-        } else if (paymentMethod && paymentMethod.includes("Mandiri")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_MANDIRI";
-            partnerServiceId = "  12022";
-        } else if (paymentMethod && paymentMethod.includes("BNI")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_BNI";
-            partnerServiceId = "  12033";
-        } else if (paymentMethod && paymentMethod.includes("BRI")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_BRI";
-            partnerServiceId = "  12044";
-        } else if (paymentMethod && paymentMethod.includes("BSI")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_BSI";
-            partnerServiceId = "  12055";
-        } else if (paymentMethod && paymentMethod.includes("Permata")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_PERMATA";
-            partnerServiceId = "  12066";
-        } else if (paymentMethod && paymentMethod.includes("Danamon")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_DANAMON";
-            partnerServiceId = "  12077";
-        } else if (paymentMethod && paymentMethod.includes("CIMB")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_CIMB";
-            partnerServiceId = "  12088";
-        } else if (paymentMethod && paymentMethod.includes("Maybank")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_MAYBANK";
-            partnerServiceId = "  12099";
-        } else if (paymentMethod && paymentMethod.includes("Sinarmas")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_SINARMAS";
-            partnerServiceId = "  18990";
-        } else if (paymentMethod && paymentMethod.includes("BNC")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_BNC";
-            partnerServiceId = "  90341537";
-        } else if (paymentMethod && paymentMethod.includes("BTN")) {
-            channelName = "VIRTUAL_ACCOUNT_BANK_BTN";
-            partnerServiceId = "  12222";
-        }
-
-        let endpoint = "/virtual-accounts/bi-snap-va/v1.1/transfer-va/create-va";
-        
-        const customerNo = String(Math.floor(100000 + Math.random() * 900000));
-        const cleanServiceId = partnerServiceId.trim();
-        const virtualAccountNo = cleanServiceId + customerNo.padStart(13 - cleanServiceId.length, '0');
-
-        let requestBody = {
-            "partnerServiceId": partnerServiceId,
-            "customerNo": customerNo,
-            "virtualAccountNo": virtualAccountNo,
-            "virtualAccountName": email ? email.split('@')[0] : "Customer",
-            "virtualAccountEmail": email || "customer@mail.com",
-            "virtualAccountPhone": phone || "081234567890",
-            "trxId": invoiceNumber,
-            "totalAmount": {
-                "value": Number(amount).toFixed(2),
-                "currency": "IDR"
+        const requestBody = {
+            "order": {
+                "amount": Number(amount),
+                "invoice_number": invoiceNumber,
+                "currency": "IDR",
+                "info": "Top Up Saldo FastConvert"
             },
-            "additionalInfo": {
-                "channel": channelName,
-                "virtualAccountConfig": {
-                    "reusableStatus": false
-                }
+            "payment": {
+                "payment_due_date": 1440
             },
-            "virtualAccountTrxType": "C",
-            "expiredDate": new Date(Date.now() + 24*60*60*1000).toISOString().slice(0, 19) + "+07:00"
+            "customer": {
+                "name": email ? email.split('@')[0] : "Customer",
+                "email": email || "customer@mail.com"
+            }
         };
 
-        if (paymentMethod === 'QRIS') {
-            endpoint = "/api/v1/qr/qr-mpm-generate";
-            requestBody = {
-                "partnerReferenceNo": invoiceNumber,
-                "amount": { "value": Number(amount).toFixed(2), "currency": "IDR" },
-                "feeType": "INTERNAL"
-            };
-        }
-
+        const endpoint = "/checkout/v1/payment";
         const bodyString = JSON.stringify(requestBody);
         const digest = crypto.createHash('sha256').update(bodyString).digest('base64');
-        const stringToSign = `POST\n${endpoint}\n${digest}\n${timestamp}`;
+        const stringToSign = `Client-Id:${DOKU_CLIENT_ID}\nRequest-Id:${requestId}\nRequest-Timestamp:${requestTimestamp}\nRequest-Target:${endpoint}\nDigest:${digest}`;
         const signature = crypto.createHmac('sha512', DOKU_SECRET_KEY).update(stringToSign).digest('base64');
 
         const dokuResponse = await fetch(`${DOKU_BASE_URL}${endpoint}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-TIMESTAMP': timestamp,
-                'X-SIGNATURE': signature,
-                'X-PARTNER-ID': DOKU_CLIENT_ID,
-                'X-EXTERNAL-ID': externalId,
-                'X-API-KEY': DOKU_API_KEY,
-                'CHANNEL-ID': 'H2H'
+                'Client-Id': DOKU_CLIENT_ID,
+                'Request-Id': requestId,
+                'Request-Timestamp': requestTimestamp,
+                'Signature': `HMACSHA512=${signature}`
             },
             body: bodyString
         });
 
         const dokuData = await dokuResponse.json();
-        console.log("DOKU Response:", dokuData);
+        console.log("DOKU Checkout Response:", dokuData);
 
-        if (dokuResponse.ok && dokuData.virtualAccountData?.virtualAccountNo) {
-            return res.status(200).json({ success: true, paymentCode: dokuData.virtualAccountData.virtualAccountNo.trim() });
-        } else if (dokuData.qrString) {
-            return res.status(200).json({ success: true, paymentCode: dokuData.qrString });
+        if (dokuResponse.ok && dokuData.response?.payment?.url) {
+            return res.status(200).json({ 
+                success: true, 
+                paymentUrl: dokuData.response.payment.url 
+            });
         } else {
-            return res.status(200).json({ success: true, paymentCode: virtualAccountNo.trim() });
+            return res.status(500).json({ success: false, message: "Gagal membuat tautan pembayaran DOKU." });
         }
     } catch (error) {
         console.error("API Error:", error);
-        const fallbackNo = "90341537" + Math.floor(10000 + Math.random() * 90000);
-        return res.status(200).json({ success: true, paymentCode: fallbackNo });
+        return res.status(500).json({ success: false, message: error.message });
     }
 });
 
@@ -149,11 +85,11 @@ app.post('/api/doku-notification', async (req, res) => {
         const notificationData = req.body;
         console.log("Webhook DOKU diterima:", notificationData);
 
-        const trxId = notificationData.order?.invoice_number || notificationData.partnerReferenceNo || notificationData.trxid || notificationData.trxId;
+        const trxId = notificationData.order?.invoice_number || notificationData.partnerReferenceNo;
         const paymentStatus = notificationData.transaction_status || notificationData.status;
-        const paidAmount = Number(notificationData.amount || notificationData.order?.amount || notificationData.paidAmount?.value || 0);
+        const paidAmount = Number(notificationData.amount || notificationData.order?.amount || 0);
 
-        if (paymentStatus === 'SUCCESS' || paymentStatus === 'PAID' || notificationData.responseCode === '2000000') {
+        if (paymentStatus === 'SUCCESS' || paymentStatus === 'PAID') {
             const trxQuery = await db.collection('transactions').where('trxid', '==', trxId).get();
             if (!trxQuery.empty) {
                 const trxDoc = trxQuery.docs[0];
@@ -171,14 +107,14 @@ app.post('/api/doku-notification', async (req, res) => {
                 }
             }
         }
-        return res.status(200).json({ responseCode: "2000000", responseMessage: "Success" });
+        return res.status(200).json({ status: "OK" });
     } catch (error) {
         console.error("Webhook Error:", error);
-        return res.status(500).json({ responseCode: "5000000", responseMessage: error.message });
+        return res.status(500).json({ error: error.message });
     }
 });
 
-app.get('/', (req, res) => res.send("Fast Convert DOKU Server Running!"));
+app.get('/', (req, res) => res.send("Fast Convert DOKU Link Server Running!"));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server DOKU berjalan di port ${PORT}`));
+app.listen(PORT, () => console.log(`Server berjalan di port ${PORT}`));
 
