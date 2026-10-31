@@ -57,14 +57,14 @@ app.post('/api/create-invoice', async (req, res) => {
             channelName = "VIRTUAL_ACCOUNT_BANK_CIMB";
             partnerServiceId = "  12088";
         } else if (paymentMethod && paymentMethod.includes("Maybank")) {
-            channelName = "VIRTual_ACCOUNT_BANK_MAYBANK";
+            channelName = "VIRTUAL_ACCOUNT_BANK_MAYBANK";
             partnerServiceId = "  12099";
         } else if (paymentMethod && paymentMethod.includes("Sinarmas")) {
             channelName = "VIRTUAL_ACCOUNT_BANK_SINARMAS";
             partnerServiceId = "  18990";
         } else if (paymentMethod && paymentMethod.includes("BNC")) {
             channelName = "VIRTUAL_ACCOUNT_BANK_BNC";
-            partnerServiceId = "  90341537"; // Sesuai Merchant BIN BNC Dashboard Anda
+            partnerServiceId = "  90341537";
         } else if (paymentMethod && paymentMethod.includes("BTN")) {
             channelName = "VIRTUAL_ACCOUNT_BANK_BTN";
             partnerServiceId = "  12222";
