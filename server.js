@@ -18,7 +18,9 @@ app.use(express.json());
 const DOKU_CLIENT_ID = "BRN-0216-1793357283385";
 const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_API_KEY = "doku_key_b0222d971c30474d9dbca1dbfb5f46ee";
-const DOKU_BASE_URL = "https://api-sandbox.doku.com"; // Gunakan sandbox untuk uji coba
+
+// MENGGUNAKAN URL PRODUKSI / LIVE UNTUK TRANSAKSI NYATA
+const DOKU_BASE_URL = "https://api.doku.com"; 
 
 // ENDPOINT PEMBUATAN LINK CHECKOUT DOKU
 app.post('/api/create-invoice', async (req, res) => {
@@ -132,7 +134,7 @@ app.post('/api/doku-notification', async (req, res) => {
     }
 });
 
-app.get('/', (req, res) => res.send("Fast Convert DOKU Server Running!"));
+app.get('/', (req, res) => res.send("Fast Convert DOKU Live Server Running!"));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server berjalan di port ${PORT}`));
 
