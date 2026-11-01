@@ -180,6 +180,106 @@ app.post('/api/doku-notification', async (req, res) => {
     }
 });
 
+// Endpoint untuk Cek Status Transaksi DOKU secara Manual (Tombol Tinjau Ulang)
+app.post('/api/check-status', async (req, res) => {
+    try {
+        const { invoiceNumber } = req.body;
+        if (!invoiceNumber) {
+            return res.status(400).json({ success: false, message: "Invoice number diperlukan." });
+        }
+
+        // Cari transaksi di Firestore
+        const txQuery = await db.collection('transactions').where('trxid', '==', invoiceNumber).get();
+        if (txQuery.empty) {
+            return res.status(404).json({ success: false, message: "Transaksi tidak ditemukan." });
+        }
+
+        const txDoc = txQuery.docs[0];
+        const txData = txDoc.data();
+
+        // Jika sudah selesai, langsung kembalikan sukses
+        if (txData.status === 'selesai') {
+            return res.status(200).json({ success: true, status: 'selesai', message: "Transaksi sudah selesai." });
+        }
+
+        // Query ke API DOKU untuk cek status pembayaran terkini
+        const endpoint = `/checkout/v1/payment/status/${invoiceNumber}`;
+        const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
+        const requestId = "REQ-CHECK-" + Date.now();
+
+        const signatureRawData = `Client-Id:${DOKU_CLIENT_ID}\nRequest-Id:${requestId}\nRequest-Timestamp:${requestTimestamp}\nRequest-Target:${endpoint}`;
+        const signatureHmac = crypto.createHmac('sha256', DOKU_SECRET_KEY).update(signatureRawData).digest('base64');
+        const signature = `HMACSHA256=${signatureHmac}`;
+
+        const dokuResponse = await fetch(`${DOKU_BASE_URL}${endpoint}`, {
+            method: 'GET',
+            headers: {
+                'Client-Id': DOKU_CLIENT_ID,
+                'Request-Id': requestId,
+                'Request-Timestamp': requestTimestamp,
+                'Request-Target': endpoint,
+                'Signature': signature
+            }
+        });
+
+        const responseText = await dokuResponse.text();
+        let dokuData;
+        try {
+            dokuData = JSON.parse(responseText);
+        } catch (e) {
+            return res.status(500).json({ success: false, message: "Gagal memparsing respons dari DOKU." });
+        }
+
+        const trxStatus = dokuData.transaction?.status || dokuData.status;
+        const statusUpper = String(trxStatus || "").toUpperCase();
+
+        // Jika di DOKU sudah SUKSES, update database & tambahkan saldo
+        if (statusUpper === 'SUCCESS' || statusUpper === 'SUKSES' || statusUpper === 'PAJ' || statusUpper === 'SUCCESSFUL') {
+            const amount = Number(txData.amount || 0);
+            const userEmail = txData.email;
+            const targetUserId = txData.userId;
+
+            let userDocRef = null;
+            let currentBalance = 0;
+
+            if (targetUserId) {
+                userDocRef = db.collection('users').doc(targetUserId);
+                const userDoc = await userDocRef.get();
+                if (userDoc.exists) currentBalance = Number(userDoc.data().balance || 0);
+            } else if (userEmail) {
+                const userQuery = await db.collection('users').where('email', '==', userEmail).get();
+                if (!userQuery.empty) {
+                    userDocRef = userQuery.docs[0].ref;
+                    const userDoc = await userDocRef.get();
+                    if (userDoc.exists) currentBalance = Number(userDoc.data().balance || 0);
+                }
+            }
+
+            await db.runTransaction(async (transaction) => {
+                transaction.update(txDoc.ref, {
+                    status: 'selesai',
+                    detail: `Top-up Saldo via DOKU Berhasil (Ditinjau Ulang)`,
+                    updatedAt: new Date().toISOString()
+                });
+
+                if (userDocRef) {
+                    transaction.update(userDocRef, {
+                        balance: currentBalance + amount,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            });
+
+            return res.status(200).json({ success: true, status: 'selesai', message: "Pembayaran terkonfirmasi berhasil! Saldo telah ditambahkan." });
+        } else {
+            return res.status(200).json({ success: true, status: 'diproses', message: "Pembayaran belum diselesaikan atau masih diproses oleh DOKU." });
+        }
+    } catch (error) {
+        console.error("Check Status Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 app.get('/', (req, res) => res.send("Fast Convert DOKU Server Active!"));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`DOKU Server running on port ${PORT}`));
