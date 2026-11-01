@@ -104,10 +104,7 @@ app.post('/api/doku-notification', async (req, res) => {
     try {
         const notification = req.body;
         
-        // Menangkap nomor invoice sesuai struktur body DOKU (order.invoice_number)
         const invoiceNumber = notification.order?.invoice_number || notification.trxid || notification.invoice_number;
-        
-        // Menangkap status transaksi (transaction.status bernilai "SUCCESS")
         const transactionStatus = notification.transaction?.status || notification.status;
 
         if (!invoiceNumber) {
@@ -133,15 +130,27 @@ app.post('/api/doku-notification', async (req, res) => {
             const targetUserId = txData.userId;
 
             let userDocRef = null;
+            let currentBalance = 0;
+
+            // 1. LAKUKAN SEMUA PEMBACAAN (READ) DI LUAR TRANSAKSI
             if (targetUserId) {
                 userDocRef = db.collection('users').doc(targetUserId);
+                const userDoc = await userDocRef.get();
+                if (userDoc.exists) {
+                    currentBalance = Number(userDoc.data().balance || 0);
+                }
             } else if (userEmail) {
                 const userQuery = await db.collection('users').where('email', '==', userEmail).get();
                 if (!userQuery.empty) {
                     userDocRef = userQuery.docs[0].ref;
+                    const userDoc = await userDocRef.get();
+                    if (userDoc.exists) {
+                        currentBalance = Number(userDoc.data().balance || 0);
+                    }
                 }
             }
 
+            // 2. LAKUKAN PENULISAN (WRITE) DI DALAM TRANSAKSI
             await db.runTransaction(async (transaction) => {
                 transaction.update(txDoc.ref, {
                     status: 'selesai',
@@ -150,14 +159,10 @@ app.post('/api/doku-notification', async (req, res) => {
                 });
 
                 if (userDocRef) {
-                    const userDoc = await transaction.get(userDocRef);
-                    if (userDoc.exists) {
-                        const currentBalance = Number(userDoc.data().balance || 0);
-                        transaction.update(userDocRef, {
-                            balance: currentBalance + amount,
-                            updatedAt: new Date().toISOString()
-                        });
-                    }
+                    transaction.update(userDocRef, {
+                        balance: currentBalance + amount,
+                        updatedAt: new Date().toISOString()
+                    });
                 }
             });
 
