@@ -17,10 +17,45 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Konfigurasi DOKU
 const DOKU_CLIENT_ID = "BRN-0216-1793357283385";
 const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_BASE_URL = "https://api.doku.com"; 
 
+// ==========================================
+// 1. FITUR OKECONNECT PROXY
+// ==========================================
+app.get('/trx', async (req, res) => {
+    try {
+        const { product, dest, refID, memberID, pin, password } = req.query;
+
+        if (!product || !dest) {
+            return res.status(400).send("Parameter OkeConnect tidak lengkap.");
+        }
+
+        const clientIp = req.headers['x-forwarded-for'] || '13.213.166.188';
+        const targetUrl = `https://h2h.okeconnect.com/trx?product=${product}&dest=${dest}&refID=${refID}&memberID=${memberID}&pin=${pin}&password=${password}`;
+
+        const response = await fetch(targetUrl, {
+            headers: {
+                'X-Forwarded-For': clientIp
+            }
+        });
+        const data = await response.text();
+
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.status(200).send(data);
+    } catch (error) {
+        console.error("OkeConnect Proxy Error:", error);
+        res.status(500).send("Gagal menghubungkan ke server pusat: " + error.message);
+    }
+});
+
+
+// ==========================================
+// 2. FITUR PEMBUATAN INVOICE DOKU (TOP UP)
+// ==========================================
 app.post('/api/create-invoice', async (req, res) => {
     try {
         const { amount, invoiceNumber, email } = req.body;
@@ -75,15 +110,14 @@ app.post('/api/create-invoice', async (req, res) => {
             return res.status(500).json({ success: false, message: "DOKU merespons dengan format yang tidak valid." });
         }
 
-        console.log("DOKU Checkout Response:", dokuData);
-
         if (dokuResponse.ok && dokuData.response?.payment?.url) {
-            // Simpan transaksi pending ke Firestore dengan aman karena autentikasi sudah valid
+            // Simpan transaksi pending ke Firestore
             await db.collection('transactions').add({
                 trxid: invoiceNumber,
                 amount: Number(amount),
                 email: email || "customer@mail.com",
                 status: 'pending',
+                type: 'Top-Up Saldo',
                 createdAt: new Date().toISOString()
             });
 
@@ -95,12 +129,89 @@ app.post('/api/create-invoice', async (req, res) => {
             return res.status(500).json({ success: false, message: dokuData.error?.message || "Gagal membuat tautan pembayaran DOKU." });
         }
     } catch (error) {
-        console.error("API Error:", error);
+        console.error("API Create Invoice Error:", error);
         return res.status(500).json({ success: false, message: error.message });
     }
 });
 
-app.get('/', (req, res) => res.send("Fast Convert DOKU Server Running!"));
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server berjalan di port ${PORT}`));
 
+// ==========================================
+// 3. FITUR WEBHOOK DOKU (NOTIFIKASI OTOMATIS)
+// ==========================================
+app.post('/api/doku-notification', async (req, res) => {
+    try {
+        const notification = req.body;
+        console.log("DOKU Notification Received:", JSON.stringify(notification, null, 2));
+
+        const invoiceNumber = notification.order?.invoice_number || notification.trxid;
+        const transactionStatus = notification.transaction?.status || notification.status;
+
+        if (!invoiceNumber) {
+            return res.status(400).json({ success: false, message: "Invoice number tidak ditemukan." });
+        }
+
+        const txQuery = await db.collection('transactions').where('trxid', '==', invoiceNumber).get();
+        
+        if (txQuery.empty) {
+            return res.status(404).json({ success: false, message: "Transaksi tidak ditemukan." });
+        }
+
+        const txDoc = txQuery.docs[0];
+        const txData = txDoc.data();
+
+        if (txData.status === 'selesai') {
+            return res.status(200).json({ success: true, message: "Transaksi sudah diproses sebelumnya." });
+        }
+
+        if (transactionStatus === 'SUCCESS' || transactionStatus === 'PAJ' || transactionStatus === 'SUCCESSFUL') {
+            const amount = Number(txData.amount || 0);
+            const userEmail = txData.email;
+
+            const userQuery = await db.collection('users').where('email', '==', userEmail).get();
+
+            await db.runTransaction(async (transaction) => {
+                // Update status transaksi jadi selesai
+                transaction.update(txDoc.ref, {
+                    status: 'selesai',
+                    updatedAt: new Date().toISOString()
+                });
+
+                // Tambahkan saldo otomatis ke user
+                if (!userQuery.empty) {
+                    const userDocRef = userQuery.docs[0].ref;
+                    const userData = userQuery.docs[0].data();
+                    const currentBalance = Number(userData.balance || 0);
+                    const newBalance = currentBalance + amount;
+
+                    transaction.update(userDocRef, {
+                        balance: newBalance,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            });
+
+            console.log(`Top-up Rp ${amount} untuk ${userEmail} berhasil & saldo bertambah.`);
+            return res.status(200).json({ success: true, message: "Webhook sukses diproses." });
+        } else {
+            await txDoc.ref.update({
+                status: 'ditolak',
+                updatedAt: new Date().toISOString()
+            });
+            return res.status(200).json({ success: true, message: "Status transaksi diperbarui menjadi ditolak." });
+        }
+
+    } catch (error) {
+        console.error("Webhook Error:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// Root Endpoint
+app.get('/', (req, res) => {
+    res.send("Fast Convert Unified Server (OkeConnect & DOKU) is Active and Running!");
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server berjalan di port ${PORT}`);
+});
