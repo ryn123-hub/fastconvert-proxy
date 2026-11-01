@@ -23,7 +23,7 @@ const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_BASE_URL = "https://api.doku.com"; 
 
 // ==========================================
-// 1. FITUR OKECONNECT PROXY (E-WALLET / PRODUK)
+// 1. FITUR OKECONNECT PROXY (E-WALLET & PPOB)
 // ==========================================
 app.get('/trx', async (req, res) => {
     try {
@@ -111,7 +111,7 @@ app.post('/api/create-invoice', async (req, res) => {
         }
 
         if (dokuResponse.ok && dokuData.response?.payment?.url) {
-            // Simpan transaksi ke koleksi 'transactions' Firestore agar masuk riwayat utama
+            // Simpan transaksi ke Firestore agar langsung masuk ke riwayat utama dengan status 'diproses'
             await db.collection('transactions').add({
                 trxid: invoiceNumber,
                 userId: userId || "",
@@ -181,14 +181,14 @@ app.post('/api/doku-notification', async (req, res) => {
             }
 
             await db.runTransaction(async (transaction) => {
-                // 1. Update status transaksi menjadi 'selesai' (mengikuti format OkeConnect)
+                // 1. Update status transaksi menjadi 'selesai' (hijau)
                 transaction.update(txDoc.ref, {
                     status: 'selesai',
                     detail: `Top-up Saldo via DOKU Berhasil`,
                     updatedAt: new Date().toISOString()
                 });
 
-                // 2. Tambahkan saldo otomatis ke dokumen user
+                // 2. Tambahkan saldo otomatis ke user
                 if (userDocRef) {
                     const userDoc = await transaction.get(userDocRef);
                     if (userDoc.exists) {
