@@ -103,7 +103,11 @@ app.post('/api/create-invoice', async (req, res) => {
 app.post('/api/doku-notification', async (req, res) => {
     try {
         const notification = req.body;
-        const invoiceNumber = notification.order?.invoice_number || notification.trxid;
+        
+        // Menangkap nomor invoice sesuai struktur body DOKU (order.invoice_number)
+        const invoiceNumber = notification.order?.invoice_number || notification.trxid || notification.invoice_number;
+        
+        // Menangkap status transaksi (transaction.status bernilai "SUCCESS")
         const transactionStatus = notification.transaction?.status || notification.status;
 
         if (!invoiceNumber) {
@@ -112,17 +116,18 @@ app.post('/api/doku-notification', async (req, res) => {
 
         const txQuery = await db.collection('transactions').where('trxid', '==', invoiceNumber).get();
         if (txQuery.empty) {
-            return res.status(404).json({ success: false, message: "Transaksi tidak ditemukan." });
+            return res.status(200).json({ success: true, message: "Transaksi tidak ditemukan di database, diabaikan." });
         }
 
         const txDoc = txQuery.docs[0];
         const txData = txDoc.data();
 
         if (txData.status === 'selesai') {
-            return res.status(200).json({ success: true, message: "Sudah diproses." });
+            return res.status(200).json({ success: true, message: "Sudah diproses sebelumnya." });
         }
 
-        if (transactionStatus === 'SUCCESS' || transactionStatus === 'PAJ' || transactionStatus === 'SUCCESSFUL') {
+        const statusUpper = String(transactionStatus || "").toUpperCase();
+        if (statusUpper === 'SUCCESS' || statusUpper === 'SUKSES' || statusUpper === 'PAJ' || statusUpper === 'SUCCESSFUL') {
             const amount = Number(txData.amount || 0);
             const userEmail = txData.email;
             const targetUserId = txData.userId;
@@ -130,7 +135,7 @@ app.post('/api/doku-notification', async (req, res) => {
             let userDocRef = null;
             if (targetUserId) {
                 userDocRef = db.collection('users').doc(targetUserId);
-            } else {
+            } else if (userEmail) {
                 const userQuery = await db.collection('users').where('email', '==', userEmail).get();
                 if (!userQuery.empty) {
                     userDocRef = userQuery.docs[0].ref;
@@ -156,13 +161,13 @@ app.post('/api/doku-notification', async (req, res) => {
                 }
             });
 
-            return res.status(200).json({ success: true, message: "Webhook sukses." });
+            return res.status(200).json({ success: true, message: "Webhook sukses diproses." });
         } else {
             await txDoc.ref.update({
                 status: 'ditolak',
                 updatedAt: new Date().toISOString()
             });
-            return res.status(200).json({ success: true, message: "Ditolak." });
+            return res.status(200).json({ success: true, message: "Status transaksi bukan sukses." });
         }
     } catch (error) {
         console.error("Webhook Error:", error);
