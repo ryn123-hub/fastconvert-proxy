@@ -4,9 +4,11 @@ const fetch = require('node-fetch');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 
+// Inisialisasi Firebase Admin dengan file lokal yang benar
 const serviceAccount = require('./serviceAccountKey.json');
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+  credential: admin.credential.cert(serviceAccount),
+  databaseURL: "https://starseven-81e63-default-rtdb.asia-southeast1.firebasedatabase.app"
 });
 
 const db = admin.firestore();
