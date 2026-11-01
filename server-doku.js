@@ -20,11 +20,35 @@ const DOKU_CLIENT_ID = "BRN-0216-1793357283385";
 const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_BASE_URL = "https://api.doku.com"; 
 
-// Endpoint Pembuatan Invoice DOKU (Top-Up)
+// Endpoint Pembuatan Invoice DOKU (Top-Up) - Menyesuaikan field fullName
 app.post('/api/create-invoice', async (req, res) => {
     try {
         const { amount, invoiceNumber, email, userId } = req.body;
         
+        let customerName = "KuWallet User";
+        
+        // Mencari nama berdasarkan userId (mencocokkan field uid di koleksi users)
+        if (userId) {
+            const userQuery = await db.collection('users').where('uid', '==', userId).get();
+            if (!userQuery.empty && userQuery.docs[0].data().fullName) {
+                customerName = `KuWallet ${userQuery.docs[0].data().fullName}`;
+            } else {
+                // Coba ambil langsung dari dokumen ID jika userId adalah ID dokumen
+                const userDoc = await db.collection('users').doc(userId).get();
+                if (userDoc.exists && userDoc.data().fullName) {
+                    customerName = `KuWallet ${userDoc.data().fullName}`;
+                }
+            }
+        }
+        
+        // Cadangan mencari berdasarkan email jika userId belum ketemu
+        if (customerName === "KuWallet User" && email) {
+            const userQuery = await db.collection('users').where('email', '==', email).get();
+            if (!userQuery.empty && userQuery.docs[0].data().fullName) {
+                customerName = `KuWallet ${userQuery.docs[0].data().fullName}`;
+            }
+        }
+
         const requestId = "REQ-" + Date.now();
         const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
         const endpoint = "/checkout/v1/payment";
@@ -40,7 +64,7 @@ app.post('/api/create-invoice', async (req, res) => {
                 "payment_due_date": 60
             },
             "customer": {
-                "name": email ? email.split('@')[0] : "Customer",
+                "name": customerName,
                 "email": email || "customer@mail.com"
             }
         };
@@ -75,6 +99,7 @@ app.post('/api/create-invoice', async (req, res) => {
         }
 
         if (dokuResponse.ok && dokuData.response?.payment?.url) {
+            // Menyimpan transaksi dengan struktur persis seperti di database Firestore Anda
             await db.collection('transactions').add({
                 trxid: invoiceNumber,
                 userId: userId || "",
@@ -99,7 +124,7 @@ app.post('/api/create-invoice', async (req, res) => {
     }
 });
 
-// Endpoint Webhook DOKU (Notifikasi Otomatis & Tambah Saldo)
+// Endpoint Webhook DOKU (Menyesuaikan field coin dan userId)
 app.post('/api/doku-notification', async (req, res) => {
     try {
         const notification = req.body;
@@ -119,54 +144,58 @@ app.post('/api/doku-notification', async (req, res) => {
         const txDoc = txQuery.docs[0];
         const txData = txDoc.data();
 
-        if (txData.status === 'selesai') {
-            return res.status(200).json({ success: true, message: "Sudah diproses sebelumnya." });
-        }
-
         const statusUpper = String(transactionStatus || "").toUpperCase();
         if (statusUpper === 'SUCCESS' || statusUpper === 'SUKSES' || statusUpper === 'PAJ' || statusUpper === 'SUCCESSFUL') {
             const amount = Number(txData.amount || 0);
-            const userEmail = txData.email;
             const targetUserId = txData.userId;
+            const userEmail = txData.email;
 
             let userDocRef = null;
-            let currentBalance = 0;
+            let currentCoin = 0;
 
-            // 1. LAKUKAN SEMUA PEMBACAAN (READ) DI LUAR TRANSAKSI
+            // 1. Cari user berdasarkan userId (mencocokkan field uid di koleksi users)
             if (targetUserId) {
-                userDocRef = db.collection('users').doc(targetUserId);
-                const userDoc = await userDocRef.get();
-                if (userDoc.exists) {
-                    currentBalance = Number(userDoc.data().balance || 0);
-                }
-            } else if (userEmail) {
-                const userQuery = await db.collection('users').where('email', '==', userEmail).get();
+                const userQuery = await db.collection('users').where('uid', '==', targetUserId).get();
                 if (!userQuery.empty) {
                     userDocRef = userQuery.docs[0].ref;
-                    const userDoc = await userDocRef.get();
+                    currentCoin = Number(userQuery.docs[0].data().coin || 0);
+                } else {
+                    const userDoc = await db.collection('users').doc(targetUserId).get();
                     if (userDoc.exists) {
-                        currentBalance = Number(userDoc.data().balance || 0);
+                        userDocRef = userDoc.ref;
+                        currentCoin = Number(userDoc.data().coin || 0);
                     }
                 }
             }
 
-            // 2. LAKUKAN PENULISAN (WRITE) DI DALAM TRANSAKSI
-            await db.runTransaction(async (transaction) => {
-                transaction.update(txDoc.ref, {
-                    status: 'selesai',
-                    detail: `Top-up Saldo via DOKU Berhasil`,
-                    updatedAt: new Date().toISOString()
-                });
+            // 2. Jika belum ketemu, cari berdasarkan email
+            if (!userDocRef && userEmail) {
+                const userQuery = await db.collection('users').where('email', '==', userEmail).get();
+                if (!userQuery.empty) {
+                    userDocRef = userQuery.docs[0].ref;
+                    currentCoin = Number(userQuery.docs[0].data().coin || 0);
+                }
+            }
 
-                if (userDocRef) {
+            // Eksekusi transaksi database (update status transaksi & tambah coin)
+            await db.runTransaction(async (transaction) => {
+                if (txData.status !== 'selesai') {
+                    transaction.update(txDoc.ref, {
+                        status: 'selesai',
+                        detail: `Top-up Saldo via DOKU Berhasil`,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+
+                if (userDocRef && txData.status !== 'selesai') {
                     transaction.update(userDocRef, {
-                        balance: currentBalance + amount,
+                        coin: currentCoin + amount, // Menambahkan ke field 'coin' sesuai database Anda
                         updatedAt: new Date().toISOString()
                     });
                 }
             });
 
-            return res.status(200).json({ success: true, message: "Webhook sukses diproses." });
+            return res.status(200).json({ success: true, message: "Webhook sukses diproses dan koin ditambahkan." });
         } else {
             await txDoc.ref.update({
                 status: 'ditolak',
@@ -180,7 +209,7 @@ app.post('/api/doku-notification', async (req, res) => {
     }
 });
 
-// Endpoint untuk Cek Status Transaksi DOKU secara Manual (Tombol Tinjau Ulang)
+// Endpoint Cek Status Manual (Tombol Tinjau Ulang)
 app.post('/api/check-status', async (req, res) => {
     try {
         const { invoiceNumber } = req.body;
@@ -188,7 +217,6 @@ app.post('/api/check-status', async (req, res) => {
             return res.status(400).json({ success: false, message: "Invoice number diperlukan." });
         }
 
-        // Cari transaksi di Firestore
         const txQuery = await db.collection('transactions').where('trxid', '==', invoiceNumber).get();
         if (txQuery.empty) {
             return res.status(404).json({ success: false, message: "Transaksi tidak ditemukan." });
@@ -197,12 +225,10 @@ app.post('/api/check-status', async (req, res) => {
         const txDoc = txQuery.docs[0];
         const txData = txDoc.data();
 
-        // Jika sudah selesai, langsung kembalikan sukses
         if (txData.status === 'selesai') {
             return res.status(200).json({ success: true, status: 'selesai', message: "Transaksi sudah selesai." });
         }
 
-        // Query ke API DOKU untuk cek status pembayaran terkini
         const endpoint = `/checkout/v1/payment/status/${invoiceNumber}`;
         const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
         const requestId = "REQ-CHECK-" + Date.now();
@@ -233,25 +259,33 @@ app.post('/api/check-status', async (req, res) => {
         const trxStatus = dokuData.transaction?.status || dokuData.status;
         const statusUpper = String(trxStatus || "").toUpperCase();
 
-        // Jika di DOKU sudah SUKSES, update database & tambahkan saldo
         if (statusUpper === 'SUCCESS' || statusUpper === 'SUKSES' || statusUpper === 'PAJ' || statusUpper === 'SUCCESSFUL') {
             const amount = Number(txData.amount || 0);
-            const userEmail = txData.email;
             const targetUserId = txData.userId;
+            const userEmail = txData.email;
 
             let userDocRef = null;
-            let currentBalance = 0;
+            let currentCoin = 0;
 
             if (targetUserId) {
-                userDocRef = db.collection('users').doc(targetUserId);
-                const userDoc = await userDocRef.get();
-                if (userDoc.exists) currentBalance = Number(userDoc.data().balance || 0);
-            } else if (userEmail) {
+                const userQuery = await db.collection('users').where('uid', '==', targetUserId).get();
+                if (!userQuery.empty) {
+                    userDocRef = userQuery.docs[0].ref;
+                    currentCoin = Number(userQuery.docs[0].data().coin || 0);
+                } else {
+                    const userDoc = await db.collection('users').doc(targetUserId).get();
+                    if (userDoc.exists) {
+                        userDocRef = userDoc.ref;
+                        currentCoin = Number(userDoc.data().coin || 0);
+                    }
+                }
+            }
+
+            if (!userDocRef && userEmail) {
                 const userQuery = await db.collection('users').where('email', '==', userEmail).get();
                 if (!userQuery.empty) {
                     userDocRef = userQuery.docs[0].ref;
-                    const userDoc = await userDocRef.get();
-                    if (userDoc.exists) currentBalance = Number(userDoc.data().balance || 0);
+                    currentCoin = Number(userQuery.docs[0].data().coin || 0);
                 }
             }
 
@@ -264,13 +298,13 @@ app.post('/api/check-status', async (req, res) => {
 
                 if (userDocRef) {
                     transaction.update(userDocRef, {
-                        balance: currentBalance + amount,
+                        coin: currentCoin + amount,
                         updatedAt: new Date().toISOString()
                     });
                 }
             });
 
-            return res.status(200).json({ success: true, status: 'selesai', message: "Pembayaran terkonfirmasi berhasil! Saldo telah ditambahkan." });
+            return res.status(200).json({ success: true, status: 'selesai', message: "Pembayaran terkonfirmasi berhasil! Koin telah ditambahkan." });
         } else {
             return res.status(200).json({ success: true, status: 'diproses', message: "Pembayaran belum diselesaikan atau masih diproses oleh DOKU." });
         }
