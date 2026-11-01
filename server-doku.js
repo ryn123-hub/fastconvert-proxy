@@ -25,29 +25,27 @@ app.post('/api/create-invoice', async (req, res) => {
     try {
         const { amount, invoiceNumber, email, userId } = req.body;
         
-        let customerName = "KuWallet User";
+                let customerName = "RynStore User";
         
-        // Mencari nama berdasarkan userId (mencocokkan field uid di koleksi users)
         if (userId) {
             const userQuery = await db.collection('users').where('uid', '==', userId).get();
             if (!userQuery.empty && userQuery.docs[0].data().fullName) {
-                customerName = `KuWallet ${userQuery.docs[0].data().fullName}`;
+                customerName = userQuery.docs[0].data().fullName;
             } else {
-                // Coba ambil langsung dari dokumen ID jika userId adalah ID dokumen
                 const userDoc = await db.collection('users').doc(userId).get();
                 if (userDoc.exists && userDoc.data().fullName) {
-                    customerName = `KuWallet ${userDoc.data().fullName}`;
+                    customerName = userDoc.data().fullName;
                 }
             }
         }
         
-        // Cadangan mencari berdasarkan email jika userId belum ketemu
-        if (customerName === "KuWallet User" && email) {
+        if (customerName === "RynStore User" && email) {
             const userQuery = await db.collection('users').where('email', '==', email).get();
             if (!userQuery.empty && userQuery.docs[0].data().fullName) {
-                customerName = `KuWallet ${userQuery.docs[0].data().fullName}`;
+                customerName = userQuery.docs[0].data().fullName;
             }
         }
+
 
         const requestId = "REQ-" + Date.now();
         const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
