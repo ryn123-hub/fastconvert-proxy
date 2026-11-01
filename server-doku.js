@@ -25,7 +25,7 @@ app.post('/api/create-invoice', async (req, res) => {
     try {
         const { amount, invoiceNumber, email, userId } = req.body;
         
-        let customerName = "KuWallet User";
+        let customerName = "RynStore User";
         
         if (userId) {
             const userQuery = await db.collection('users').where('uid', '==', userId).get();
@@ -39,7 +39,7 @@ app.post('/api/create-invoice', async (req, res) => {
             }
         }
         
-        if (customerName === "KuWallet User" && email) {
+        if (customerName === "RynStore User" && email) {
             const userQuery = await db.collection('users').where('email', '==', email).get();
             if (!userQuery.empty && userQuery.docs[0].data().fullName) {
                 customerName = userQuery.docs[0].data().fullName;
