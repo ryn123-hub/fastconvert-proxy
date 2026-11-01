@@ -20,12 +20,12 @@ const DOKU_CLIENT_ID = "BRN-0216-1793357283385";
 const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_BASE_URL = "https://api.doku.com"; 
 
-// Endpoint Pembuatan Invoice DOKU (Top-Up) - Menyesuaikan field fullName
+// Endpoint Pembuatan Invoice DOKU (Menyimpan paymentUrl & Nama Profil Bersih tanpa dobel)
 app.post('/api/create-invoice', async (req, res) => {
     try {
         const { amount, invoiceNumber, email, userId } = req.body;
         
-                let customerName = "RynStore User";
+        let customerName = "KuWallet User";
         
         if (userId) {
             const userQuery = await db.collection('users').where('uid', '==', userId).get();
@@ -39,13 +39,12 @@ app.post('/api/create-invoice', async (req, res) => {
             }
         }
         
-        if (customerName === "RynStore User" && email) {
+        if (customerName === "KuWallet User" && email) {
             const userQuery = await db.collection('users').where('email', '==', email).get();
             if (!userQuery.empty && userQuery.docs[0].data().fullName) {
                 customerName = userQuery.docs[0].data().fullName;
             }
         }
-
 
         const requestId = "REQ-" + Date.now();
         const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
@@ -56,7 +55,7 @@ app.post('/api/create-invoice', async (req, res) => {
                 "amount": Number(amount),
                 "invoice_number": invoiceNumber,
                 "currency": "IDR",
-                "memo": "Top Up Saldo FastConvert"
+                "memo": "Top Up Saldo KuWallet"
             },
             "payment": {
                 "payment_due_date": 60
@@ -97,7 +96,9 @@ app.post('/api/create-invoice', async (req, res) => {
         }
 
         if (dokuResponse.ok && dokuData.response?.payment?.url) {
-            // Menyimpan transaksi dengan struktur persis seperti di database Firestore Anda
+            const paymentUrl = dokuData.response.payment.url;
+
+            // Menyimpan transaksi beserta paymentUrl ke Firestore
             await db.collection('transactions').add({
                 trxid: invoiceNumber,
                 userId: userId || "",
@@ -106,12 +107,13 @@ app.post('/api/create-invoice', async (req, res) => {
                 status: 'diproses',
                 type: 'Top-Up Saldo',
                 detail: `Top-up Saldo via DOKU (Inv: ${invoiceNumber})`,
+                paymentUrl: paymentUrl,
                 createdAt: new Date().toISOString()
             });
 
             return res.status(200).json({ 
                 success: true, 
-                paymentUrl: dokuData.response.payment.url 
+                paymentUrl: paymentUrl 
             });
         } else {
             return res.status(500).json({ success: false, message: dokuData.error?.message || "Gagal membuat tautan DOKU." });
@@ -122,7 +124,7 @@ app.post('/api/create-invoice', async (req, res) => {
     }
 });
 
-// Endpoint Webhook DOKU (Menyesuaikan field coin dan userId)
+// Endpoint Webhook DOKU
 app.post('/api/doku-notification', async (req, res) => {
     try {
         const notification = req.body;
@@ -151,7 +153,6 @@ app.post('/api/doku-notification', async (req, res) => {
             let userDocRef = null;
             let currentCoin = 0;
 
-            // 1. Cari user berdasarkan userId (mencocokkan field uid di koleksi users)
             if (targetUserId) {
                 const userQuery = await db.collection('users').where('uid', '==', targetUserId).get();
                 if (!userQuery.empty) {
@@ -166,7 +167,6 @@ app.post('/api/doku-notification', async (req, res) => {
                 }
             }
 
-            // 2. Jika belum ketemu, cari berdasarkan email
             if (!userDocRef && userEmail) {
                 const userQuery = await db.collection('users').where('email', '==', userEmail).get();
                 if (!userQuery.empty) {
@@ -175,7 +175,6 @@ app.post('/api/doku-notification', async (req, res) => {
                 }
             }
 
-            // Eksekusi transaksi database (update status transaksi & tambah coin)
             await db.runTransaction(async (transaction) => {
                 if (txData.status !== 'selesai') {
                     transaction.update(txDoc.ref, {
@@ -187,7 +186,7 @@ app.post('/api/doku-notification', async (req, res) => {
 
                 if (userDocRef && txData.status !== 'selesai') {
                     transaction.update(userDocRef, {
-                        coin: currentCoin + amount, // Menambahkan ke field 'coin' sesuai database Anda
+                        coin: currentCoin + amount,
                         updatedAt: new Date().toISOString()
                     });
                 }
