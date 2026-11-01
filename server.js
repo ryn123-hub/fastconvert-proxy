@@ -4,7 +4,7 @@ const fetch = require('node-fetch');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 
-// Inisialisasi Firebase Admin dengan file lokal yang benar
+// Inisialisasi Firebase Admin dengan file serviceAccountKey.json
 const serviceAccount = require('./serviceAccountKey.json');
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -78,6 +78,7 @@ app.post('/api/create-invoice', async (req, res) => {
         console.log("DOKU Checkout Response:", dokuData);
 
         if (dokuResponse.ok && dokuData.response?.payment?.url) {
+            // Simpan transaksi pending ke Firestore dengan aman karena autentikasi sudah valid
             await db.collection('transactions').add({
                 trxid: invoiceNumber,
                 amount: Number(amount),
