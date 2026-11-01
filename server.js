@@ -23,7 +23,7 @@ const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_BASE_URL = "https://api.doku.com"; 
 
 // ==========================================
-// 1. FITUR OKECONNECT PROXY
+// 1. FITUR OKECONNECT PROXY (E-WALLET / PRODUK)
 // ==========================================
 app.get('/trx', async (req, res) => {
     try {
@@ -111,13 +111,13 @@ app.post('/api/create-invoice', async (req, res) => {
         }
 
         if (dokuResponse.ok && dokuData.response?.payment?.url) {
-            // Simpan transaksi ke Firestore agar langsung masuk riwayat dengan status 'diproses' / pending
+            // Simpan transaksi ke koleksi 'transactions' Firestore agar masuk riwayat utama
             await db.collection('transactions').add({
                 trxid: invoiceNumber,
                 userId: userId || "",
                 amount: Number(amount),
                 email: email || "customer@mail.com",
-                status: 'diproses', // Menggunakan status konsisten 'diproses'
+                status: 'diproses',
                 type: 'Top-Up Saldo',
                 detail: `Top-up Saldo via DOKU (Inv: ${invoiceNumber})`,
                 createdAt: new Date().toISOString()
@@ -170,7 +170,6 @@ app.post('/api/doku-notification', async (req, res) => {
             const userEmail = txData.email;
             const targetUserId = txData.userId;
 
-            // Cari user berdasarkan userId atau email
             let userDocRef = null;
             if (targetUserId) {
                 userDocRef = db.collection('users').doc(targetUserId);
@@ -182,14 +181,14 @@ app.post('/api/doku-notification', async (req, res) => {
             }
 
             await db.runTransaction(async (transaction) => {
-                // 1. Update status transaksi menjadi 'selesai'
+                // 1. Update status transaksi menjadi 'selesai' (mengikuti format OkeConnect)
                 transaction.update(txDoc.ref, {
                     status: 'selesai',
                     detail: `Top-up Saldo via DOKU Berhasil`,
                     updatedAt: new Date().toISOString()
                 });
 
-                // 2. Tambahkan saldo otomatis ke user
+                // 2. Tambahkan saldo otomatis ke dokumen user
                 if (userDocRef) {
                     const userDoc = await transaction.get(userDocRef);
                     if (userDoc.exists) {
@@ -220,7 +219,7 @@ app.post('/api/doku-notification', async (req, res) => {
     }
 });
 
-// Root Endpoint (Pesan sambutan aman, tidak akan masuk ke riwayat transaksi)
+// Root Endpoint
 app.get('/', (req, res) => {
     res.send("Fast Convert Unified Server (OkeConnect & DOKU) is Active and Running!");
 });
