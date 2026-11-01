@@ -1,16 +1,15 @@
 {
-  "name": "fastconvert-proxy",
+  "name": "fastconvert-backend",
   "version": "1.0.0",
-  "description": "FastConvert DOKU Server",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "firebase-admin": "^11.8.0",
-    "node-fetch": "^2.6.9"
+    "firebase-admin": "^11.11.0",
+    "node-fetch": "^2.7.0"
+  },
+  "scripts": {
+    "start-doku": "node server-doku.js",
+    "start-oke": "node server-okeconnect.js"
   }
 }
 
