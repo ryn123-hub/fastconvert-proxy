@@ -58,7 +58,7 @@ app.get('/trx', async (req, res) => {
 // ==========================================
 app.post('/api/create-invoice', async (req, res) => {
     try {
-        const { amount, invoiceNumber, email } = req.body;
+        const { amount, invoiceNumber, email, userId } = req.body;
         
         const requestId = "REQ-" + Date.now();
         const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
@@ -111,13 +111,15 @@ app.post('/api/create-invoice', async (req, res) => {
         }
 
         if (dokuResponse.ok && dokuData.response?.payment?.url) {
-            // Simpan transaksi pending ke Firestore
+            // Simpan transaksi ke Firestore agar langsung masuk riwayat dengan status 'diproses' / pending
             await db.collection('transactions').add({
                 trxid: invoiceNumber,
+                userId: userId || "",
                 amount: Number(amount),
                 email: email || "customer@mail.com",
-                status: 'pending',
+                status: 'diproses', // Menggunakan status konsisten 'diproses'
                 type: 'Top-Up Saldo',
+                detail: `Top-up Saldo via DOKU (Inv: ${invoiceNumber})`,
                 createdAt: new Date().toISOString()
             });
 
@@ -166,27 +168,39 @@ app.post('/api/doku-notification', async (req, res) => {
         if (transactionStatus === 'SUCCESS' || transactionStatus === 'PAJ' || transactionStatus === 'SUCCESSFUL') {
             const amount = Number(txData.amount || 0);
             const userEmail = txData.email;
+            const targetUserId = txData.userId;
 
-            const userQuery = await db.collection('users').where('email', '==', userEmail).get();
+            // Cari user berdasarkan userId atau email
+            let userDocRef = null;
+            if (targetUserId) {
+                userDocRef = db.collection('users').doc(targetUserId);
+            } else {
+                const userQuery = await db.collection('users').where('email', '==', userEmail).get();
+                if (!userQuery.empty) {
+                    userDocRef = userQuery.docs[0].ref;
+                }
+            }
 
             await db.runTransaction(async (transaction) => {
-                // Update status transaksi jadi selesai
+                // 1. Update status transaksi menjadi 'selesai'
                 transaction.update(txDoc.ref, {
                     status: 'selesai',
+                    detail: `Top-up Saldo via DOKU Berhasil`,
                     updatedAt: new Date().toISOString()
                 });
 
-                // Tambahkan saldo otomatis ke user
-                if (!userQuery.empty) {
-                    const userDocRef = userQuery.docs[0].ref;
-                    const userData = userQuery.docs[0].data();
-                    const currentBalance = Number(userData.balance || 0);
-                    const newBalance = currentBalance + amount;
+                // 2. Tambahkan saldo otomatis ke user
+                if (userDocRef) {
+                    const userDoc = await transaction.get(userDocRef);
+                    if (userDoc.exists) {
+                        const currentBalance = Number(userDoc.data().balance || 0);
+                        const newBalance = currentBalance + amount;
 
-                    transaction.update(userDocRef, {
-                        balance: newBalance,
-                        updatedAt: new Date().toISOString()
-                    });
+                        transaction.update(userDocRef, {
+                            balance: newBalance,
+                            updatedAt: new Date().toISOString()
+                        });
+                    }
                 }
             });
 
@@ -206,7 +220,7 @@ app.post('/api/doku-notification', async (req, res) => {
     }
 });
 
-// Root Endpoint
+// Root Endpoint (Pesan sambutan aman, tidak akan masuk ke riwayat transaksi)
 app.get('/', (req, res) => {
     res.send("Fast Convert Unified Server (OkeConnect & DOKU) is Active and Running!");
 });
@@ -215,3 +229,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server berjalan di port ${PORT}`);
 });
+
