@@ -20,10 +20,10 @@ const DOKU_CLIENT_ID = "BRN-0216-1793357283385";
 const DOKU_SECRET_KEY = "SK-Cu7TWcp0DGUeUBKyj7vu";
 const DOKU_BASE_URL = "https://api.doku.com"; 
 
-// Endpoint Pembuatan Invoice DOKU (Menyimpan paymentUrl & Nama Profil Bersih tanpa dobel)
+// Endpoint Pembuatan Invoice DOKU (Pemisahan Total Tagihan & Saldo Bersih)
 app.post('/api/create-invoice', async (req, res) => {
     try {
-        const { amount, invoiceNumber, email, userId } = req.body;
+        const { amount, originalAmount, invoiceNumber, email, userId } = req.body;
         
         let customerName = "RynStore User";
         
@@ -50,6 +50,7 @@ app.post('/api/create-invoice', async (req, res) => {
         const requestTimestamp = new Date().toISOString().slice(0, 19) + "Z";
         const endpoint = "/checkout/v1/payment";
 
+        // Total amount yang ditagihkan ke DOKU (sudah termasuk biaya admin)
         const requestBody = {
             "order": {
                 "amount": Number(amount),
@@ -98,11 +99,12 @@ app.post('/api/create-invoice', async (req, res) => {
         if (dokuResponse.ok && dokuData.response?.payment?.url) {
             const paymentUrl = dokuData.response.payment.url;
 
-            // Menyimpan transaksi beserta paymentUrl ke Firestore
+            // Menyimpan transaksi dengan amount (total tagihan) dan coinAmount (saldo bersih koin)
             await db.collection('transactions').add({
                 trxid: invoiceNumber,
                 userId: userId || "",
                 amount: Number(amount),
+                coinAmount: Number(originalAmount || amount), // Saldo bersih untuk koin user
                 email: email || "customer@mail.com",
                 status: 'diproses',
                 type: 'Top-Up Saldo',
@@ -124,7 +126,7 @@ app.post('/api/create-invoice', async (req, res) => {
     }
 });
 
-// Endpoint Webhook DOKU
+// Endpoint Webhook DOKU (Menambahkan coinAmount yang bersih)
 app.post('/api/doku-notification', async (req, res) => {
     try {
         const notification = req.body;
@@ -146,7 +148,8 @@ app.post('/api/doku-notification', async (req, res) => {
 
         const statusUpper = String(transactionStatus || "").toUpperCase();
         if (statusUpper === 'SUCCESS' || statusUpper === 'SUKSES' || statusUpper === 'PAJ' || statusUpper === 'SUCCESSFUL') {
-            const amount = Number(txData.amount || 0);
+            // Mengambil saldo bersih (coinAmount) jika ada, jika tidak fallback ke amount
+            const coinToAdd = Number(txData.coinAmount || txData.amount || 0);
             const targetUserId = txData.userId;
             const userEmail = txData.email;
 
@@ -186,7 +189,7 @@ app.post('/api/doku-notification', async (req, res) => {
 
                 if (userDocRef && txData.status !== 'selesai') {
                     transaction.update(userDocRef, {
-                        coin: currentCoin + amount,
+                        coin: currentCoin + coinToAdd, // Menambahkan saldo koin yang bersih
                         updatedAt: new Date().toISOString()
                     });
                 }
@@ -257,7 +260,7 @@ app.post('/api/check-status', async (req, res) => {
         const statusUpper = String(trxStatus || "").toUpperCase();
 
         if (statusUpper === 'SUCCESS' || statusUpper === 'SUKSES' || statusUpper === 'PAJ' || statusUpper === 'SUCCESSFUL') {
-            const amount = Number(txData.amount || 0);
+            const coinToAdd = Number(txData.coinAmount || txData.amount || 0);
             const targetUserId = txData.userId;
             const userEmail = txData.email;
 
@@ -295,7 +298,7 @@ app.post('/api/check-status', async (req, res) => {
 
                 if (userDocRef) {
                     transaction.update(userDocRef, {
-                        coin: currentCoin + amount,
+                        coin: currentCoin + coinToAdd, // Menambahkan saldo koin yang bersih
                         updatedAt: new Date().toISOString()
                     });
                 }
